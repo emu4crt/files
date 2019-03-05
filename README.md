@@ -9,7 +9,7 @@ It brings "pixel-perfect" rendering by switching host resolution to match emulat
 * Mednafen modules ported to emu4crt: 
   * Sony Playstation
   * Sega Saturn (win64 only)
-  * Nintendo NES/Famicon
+  * Nintendo NES/Famicon (snes & snes_faust)
   * Nintendo Super NES/Super Famicom
   * NEC PC Engine / PC Engine CD / SuperGrafx
 
