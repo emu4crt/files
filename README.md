@@ -1,6 +1,4 @@
-# **Mednafen 1.22.0 - emu4crt - A09**
-
-
+# **Mednafen 1.23.0 UNSTABLE - emu4crt - A09**
 
 emu4crt is a Mednafen emulator mod intended to be used on a system connected to a CRT screen, typically a 15kHz TV or an arcade monitor.
 
@@ -20,18 +18,19 @@ Many options, meaningless in a CRT screen usage, have been removed from Mednafen
   * Video display: OpenGL compatible (the only Mednafen tested renderer).
   
 emu4crt can be use in two modes:
- * `Native Resolution`: 	Same resolution as emulated system.
-			More custom resolution are required (see below)
-			Generates more resolution changes, which has side effects
- * `Super Resolution`: 	Requires only four 2560 pixel width resolutions.
-			Avoid some resolution change during emulation
 
+*`Native Resolution`: Same resolution as emulated system.
+   More custom resolution are required (see below)
+   Generates more resolution changes, which has side effects
 
-# Required resolutions
+* `Super Resolution`: Requires only four 2560 pixel width resolutions.
+   Avoid some resolution change during emulation
 
-## `Native resolutions`
+## Required resolutions
 
-- Columns:
+### `Native resolutions`
+
+* Columns:
   
 |       |256|320|352|368|512|640|704|
 |:------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -41,19 +40,18 @@ emu4crt can be use in two modes:
 |PSX    | X | X |   | X | X | X |   |
 |PCE**  | X | X |   |   | X |   |   |
 
-- Lines, for each column:
+* Lines, for each column:
 
-  - NTSC modes : 240 and 480 lines @ 60 Hz 
-  - PAL modes: 288 and 576 lines @ 50 Hz
+   NTSC modes : 240 and 480 lines @ 60 Hz 
+   PAL modes: 288 and 576 lines @ 50 Hz
 
    __*__ -> 240 and 288 lines only
 
    __**__ -> NTSC modes only
 
+### `Super Resolutions`
 
-## `Super Resolutions`:
-	4 custom resolutions cover all needs for every emulated systems:
-
+   4 custom resolutions cover all needs for every emulated systems:
 
 |      | Columns  |  Lines    |  Frequency  |
 |:-----| :------: | :-------: | :---------: |
@@ -62,17 +60,15 @@ emu4crt can be use in two modes:
 | PAL  |   2560   |  288      |     60Hz    |
 |      |   2560   |  576      |     60Hz    |
 
+Custom resolutions can be added on Windows by using Calamity's CRT Emudriver (the best way!), Soft15Hz, Powerstrip, manufacturer drivers...
 
-
-Custom resolutions can be added on Windows by using	Calamity's CRT Emudriver (the best way!), Soft15Hz, Powerstrip, manufacturer drivers...
-
-For CRT Emudriver users: 
- * emu4crt_NATIVE_RESOLUTIONS.txt contains all resolution informations to be added to VMMAKER's user_modes.ini.  
+For CRT Emudriver users:
+ * emu4crt_NATIVE_RESOLUTIONS.txt contains all resolution informations to be added to VMMAKER's user_modes.ini.
  * emu4crt_RESOLUTIONS_SUPER.txt
 
 For testing pupose, emu4crt can be used with a standard PC screen and video drivers in window mode.
- 
-# Configuration & usage:
+
+## Configuration & usage
 
 To enable resolution switch, use "video.resolution_switch" parameter in mednafen.cfg configuration file:
 
@@ -82,7 +78,7 @@ To enable resolution switch, use "video.resolution_switch" parameter in mednafen
 
 emu4crt.exe can be placed in an existing mednafen.exe directory, both can share the same configuration file and all ressource files (firmwares, savestates, etc.).
 
-# Limits and known issues:
+## Limits and known issues
 
 - The emulator does not deal with resolution refresh rate. So, to get a deterministic behavior, a resolution should only exist at the expected refresh rate (ie. no 320x240 @ 55Hz).
   
@@ -92,7 +88,7 @@ emu4crt.exe can be placed in an existing mednafen.exe directory, both can share 
   
 - Windows 7 seems quicker than Windows 10 to switch resolution, at least with CRT Emudriver.
   
-- Emulation logic has been preserved, so, game compatibility should be same as Mednafen official release.
+- Emulation logic is preserved, so, game compatibility should be same as Mednafen official release.
   
 - Alt+Enter usage, to switch from fullscreen to window mode can generate rendering scaling issues.
   
@@ -101,14 +97,14 @@ If any specific issue with emu4crt mod, of course, do not bother the Mednafen Te
 Contact forum thread:
 http://forum.arcadecontrols.com/index.php/topic,155264.0.html
 
-# Thanks
+## Thanks
 
-The Mednafen Team (https://mednafen.github.io)  for... Mednafen! 
+The Mednafen Team (https://mednafen.github.io)  for... Mednafen!
 
 CRT Emudriver's author, Calamity (http://geedorah.com/eiusdemmodi/forum/)
 
 ArcadeControls.com (www.arcadecontrols.com)
 
-No$psx author, Martin Korth for publishing PSX GPU documentation.
+No$psx author, Martin Korth for publishing PSX GPU documentation
 
-hotdog963al for his PSX core horizontal centering improvement.
+hotdog963al for his PSX core horizontal centering improvement
