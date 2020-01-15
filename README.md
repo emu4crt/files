@@ -107,4 +107,4 @@ ArcadeControls.com (www.arcadecontrols.com)
 
 No$psx author, Martin Korth for publishing PSX GPU documentation
 
-hotdog963al for his PSX core horizontal centering improvement
+hotdog963al for his PSX core horizontal centering improvment
