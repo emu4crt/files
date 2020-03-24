@@ -1,4 +1,4 @@
-# **Mednafen 1.24.0 UNSTABLE - emu4crt - A10**
+# **Mednafen 1.24.1 - emu4crt - A11**
 
 emu4crt is a Mednafen emulator mod intended to be used on a system connected to a CRT screen, typically a 15kHz TV or an arcade monitor.
 
@@ -9,7 +9,10 @@ It brings "pixel-perfect" rendering by switching host resolution to match emulat
   * Sega Saturn (win64 only)
   * Nintendo NES/Famicon (snes & snes_faust)
   * Nintendo Super NES/Super Famicom
-  * NEC PC Engine / PC Engine CD / SuperGrafx
+  * NEC PC Engine / PC Engine CD / SuperGrafx (pce & pce_fast)
+  * NEC PC-FX
+  * Sega Megadrive / Genesis
+  * Sega Master System
 
 Many options, meaningless in a CRT screen usage, have been removed from Mednafen in provided emu4crt builds (shaders, etc.).
 
@@ -32,13 +35,15 @@ emu4crt can be use in two modes:
 
 * Columns:
   
-|       |256|320|352|368|512|640|704|
-|:------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-|NES*   | X |   |   |   |   |   |   |
-|SNES   | X |   |   |   | X |   |   |
-|SATURN |   | X | X |   |   | X | X |
-|PSX    | X | X |   | X | X | X |   |
-|PCE**  | X | X |   |   | X |   |   |
+|       |256|320|341|352|368|512|640|704|
+|:------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+|NES*   | X |   |   |   |   |   |   |   |
+|SNES   | X |   |   |   |   | X |   |   |
+|SATURN |   | X |   | X |   |   | X | X |
+|PSX    | X | X |   |   | X | X | X |   |
+|PCE**  | X | X |   |   |   | X |   |   |
+|PCFX** | X |   | X |   |   |   |   |   |
+|MD/SMS | X | X |   |   |   |   |   |   |
 
 * Lines, for each column:
 
@@ -57,8 +62,8 @@ emu4crt can be use in two modes:
 |:-----| :------: | :-------: | :---------: |
 | NTSC |   2560   |  240      |     60Hz    |
 |      |   2560   |  480      |     60Hz    |
-| PAL  |   2560   |  288      |     60Hz    |
-|      |   2560   |  576      |     60Hz    |
+| PAL  |   2560   |  288      |     50Hz    |
+|      |   2560   |  576      |     50Hz    |
 
 Custom resolutions can be added on Windows by using Calamity's CRT Emudriver (the best way!), Soft15Hz, Powerstrip, manufacturer drivers...
 
@@ -82,7 +87,7 @@ emu4crt.exe can be placed in an existing mednafen.exe directory, both can share 
 
 - The emulator does not deal with resolution refresh rate. So, to get a deterministic behavior, a resolution should only exist at the expected refresh rate (ie. no 320x240 @ 55Hz).
   
-- Using emu4crt, resolution switch is not seamless process as it is on a console or with other emulators. At each resolution change, some sound and graphical glitches will occur. 
+- Using emu4crt, resolution switch is not seamless process as it is on a console or with some other emulators. At each resolution change, some sound and graphical glitches will occur. 
   
 - Graphical glitches can be limited by using full black Windows desktop background and taskbar hidding. 
   
