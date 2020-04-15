@@ -1,0 +1,1847 @@
+diff -Naur -r --no-dereference ./mednafen/configure ./emu4crt/configure
+--- ./mednafen/configure	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/configure	2020-03-24 14:09:12.518791000 -0700
+@@ -18085,7 +18085,8 @@
+ fi
+ 
+ 
+-	LIBS="-mconsole -lws2_32 -ldxguid -lwinmm -ldinput $LIBS -lwinmm"
++/* SLK - switch -mconsole */
++	LIBS="-mwindows -lws2_32 -ldxguid -lwinmm -ldinput $LIBS -lwinmm"
+ 	CPPFLAGS="-D_LFS64_LARGEFILE=1 $CPPFLAGS"
+ elif expr x"$host" : 'x.*djgpp' > /dev/null; then
+ 
+diff -Naur -r --no-dereference ./mednafen/Documentation/modules.def ./emu4crt/Documentation/modules.def
+--- ./mednafen/Documentation/modules.def	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/Documentation/modules.def	2020-04-09 14:18:03.739161091 -0700
+@@ -1,4 +1,4 @@
+-1.24.1
++1.24.1-emu4crt-A12
+ apple2
+ Apple II/II+
+ 250
+diff -Naur -r --no-dereference ./mednafen/src/drivers/main.cpp ./emu4crt/src/drivers/main.cpp
+--- ./mednafen/src/drivers/main.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/drivers/main.cpp	2020-04-09 15:20:47.981949328 -0700
+@@ -273,6 +273,7 @@
+ MDFNGI *CurGame=NULL;
+ 
+ 
++
+ #ifdef WIN32
+ static std::string GetModuleFileName_UTF8(HMODULE hModule)
+ {
+@@ -287,6 +288,47 @@
+  return UTF16_to_UTF8(&path[0], nullptr, true);
+ }
+ 
++
++static bool HandleConsoleMadness(void) // SLK - enforce stdout.txt & stderr.txt out to files
++{
++  bool ret;
++  if(AllocConsole())
++  {
++	HWND cwin = GetConsoleWindow();
++	ShowWindow(cwin, SW_HIDE);
++
++    freopen("CONOUT$", "w", stdout);
++    freopen("CONOUT$", "w", stderr);
++
++    SetConsoleOutputCP(65001);	// UTF-8
++
++	std::string path;
++ 	size_t catpos;	// Meow meow.
++ 	path = GetModuleFileName_UTF8(NULL);
++	if((catpos = path.find_last_of('\\')) != std::string::npos) path.resize(catpos + 1);
++	const std::u16string stdout_path = UTF8_to_UTF16(path + "stdout.txt", nullptr, true);
++ 	const std::u16string stderr_path = UTF8_to_UTF16(path + "stderr.txt", nullptr, true);
++ 	int new_stdout = -1;
++ 	int new_stderr = -1;
++ 	new_stdout = _wopen((const wchar_t*)stdout_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, _S_IREAD | _S_IWRITE);
++ 	new_stderr = _wopen((const wchar_t*)stderr_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, _S_IREAD | _S_IWRITE);
++
++  	fflush(stdout);
++  	fflush(stderr);
++
++  	dup2(new_stdout, fileno(stdout));
++  	dup2(new_stderr, fileno(stderr));
++
++   close(new_stdout);
++   close(new_stderr);
++
++  }
++  ret = false;
++  return ret;
++}
++
++/* // SLK - Disable native redirection functions due to switch back to windows application
++
+ // returns 1 if redirected, 0 if not redirected due to error, -1 if not redirected due to env variable
+ static int RedirectSTDxxx(void)
+ {
+@@ -398,6 +440,8 @@
+ 
+  return ret;
+ }
++*/
++
+ #endif
+ 
+ void Mednafen::MDFND_OutputNotice(MDFN_NoticeType t, const char* s) noexcept
+@@ -1034,6 +1078,10 @@
+ }
+ 
+ static volatile unsigned NeedVideoSync = 0;
++//SLK
++static volatile unsigned NeedResolutionChange = 0;  // trigger to switch window/fullscreen resolution
++//SLK end
++
+ static int GameLoop(void *arg);
+ int volatile GameThreadRun = 0;
+ static bool MDFND_Update(int WhichVideoBuffer, int16 *Buffer, int Count);
+@@ -1267,56 +1315,84 @@
+ {
+ 	while(GameThreadRun)
+ 	{
+-         int16 *sound;
+-         int32 ssize;
+-         bool fskip;
+-        
++	  //SLK - trap change resolution request
++	  if(resolution_to_change)
++	  {
++	    if(use_native_resolution)
++	    {
++			if((current_resolution_w != resolution_to_change_w) || (current_resolution_h != resolution_to_change_h))
++			{
++				printf("MAIN - native resolution to switch: %dx%d\n",resolution_to_change_w,resolution_to_change_h);
++				NeedResolutionChange++;
++			}
++			else {printf("MAIN - resolution change bypassed\n");}
++		}
++	    if(use_super_resolution)
++	    {
++	      if(resolution_to_change_h != current_resolution_h)
++	      {
++				resolution_to_change_w = 2560;
++				printf("MAIN - Super resolution to switch: 2560 x %d\n", resolution_to_change_h);
++				NeedResolutionChange++;
++	      }
++	      else {printf("MAIN - Super resolution change bypassed\n");}
++		}
++		resolution_to_change = false;
++	  }
++	  // SLK - end
++		
++		int16 *sound;
++		int32 ssize;
++		bool fskip;
++	
+ 	 /* If we requested a new video mode, wait until it's set before calling the emulation code again.
+ 	 */
+-	 while(NeedVideoSync)
+-	 {
+-	  if(!GameThreadRun) return(1);	// Might happen if video initialization failed
+-	  Time::SleepMS(2);
+-	 }
+ 
+-	 if(Sound_NeedReInit())
+-	  GT_ReinitSound();
++	//SLK
++	while(NeedVideoSync)
++	//SLK
++	{
++		if(!GameThreadRun) return(1);	// Might happen if video initialization failed
++	  	Time::SleepMS(2);
++	}
++	if(Sound_NeedReInit())
++		GT_ReinitSound();
+ 
+-	 if(MDFNDnetplay && !(NoWaiting & 0x2))	// TODO: Hacky, clean up.
+-	  ers.SetETtoRT();
+-	 //
+-	 //
+-	 fskip = ers.NeedFrameSkip();
+-	 fskip &= MDFN_GetSettingB("video.frameskip");
+-	 fskip &= !(pending_ssnapshot || pending_snapshot || pending_save_state || pending_save_movie || NeedFrameAdvance);
+-	 fskip |= (bool)NoWaiting;
++	if(MDFNDnetplay && !(NoWaiting & 0x2))	// TODO: Hacky, clean up.
++		ers.SetETtoRT();
++	//
++	//
++	fskip = ers.NeedFrameSkip();
++	fskip &= MDFN_GetSettingB("video.frameskip");
++	fskip &= !(pending_ssnapshot || pending_snapshot || pending_save_state || pending_save_movie || NeedFrameAdvance);
++	fskip |= (bool)NoWaiting;
+ 
+-	 //printf("fskip %d; NeedFrameAdvance=%d\n", fskip, NeedFrameAdvance);
++	//printf("fskip %d; NeedFrameAdvance=%d\n", fskip, NeedFrameAdvance);
+ 
+-	 NeedFrameAdvance = false;
+-	 //
+-	 //
+-	 SoftFB[SoftFB_BackBuffer].lw[0] = ~0;
++	NeedFrameAdvance = false;
++	//
++	//
++	SoftFB[SoftFB_BackBuffer].lw[0] = ~0;
+ 
+-	 //
+-	 //
+-	 //
+-	 EmulateSpecStruct espec;
++	//
++	//
++	//
++	EmulateSpecStruct espec;
+ 
+-         espec.surface = SoftFB[SoftFB_BackBuffer].surface.get();
+-         espec.LineWidths = SoftFB[SoftFB_BackBuffer].lw.get();
+-	 espec.skip = fskip;
+-	 espec.soundmultiplier = CurGameSpeed;
+-	 espec.NeedRewind = DNeedRewind;
+-
+- 	 espec.SoundRate = Sound_GetRate();
+-	 espec.SoundBuf = Sound_GetEmuModBuffer(&espec.SoundBufMaxSize);
+- 	 espec.SoundVolume = (double)MDFN_GetSettingUI("sound.volume") / 100;
++	espec.surface = SoftFB[SoftFB_BackBuffer].surface.get();
++	espec.LineWidths = SoftFB[SoftFB_BackBuffer].lw.get();
++	espec.skip = fskip;
++	espec.soundmultiplier = CurGameSpeed;
++	espec.NeedRewind = DNeedRewind;
+ 
+-	 if(MDFN_UNLIKELY(StateRCTest))
+-	 {
+-	  // Note: Won't work correctly with modules that do mid-sync.
+-	  EmulateSpecStruct estmp = espec;
++	espec.SoundRate = Sound_GetRate();
++	espec.SoundBuf = Sound_GetEmuModBuffer(&espec.SoundBufMaxSize);
++	espec.SoundVolume = (double)MDFN_GetSettingUI("sound.volume") / 100;
++
++	if(MDFN_UNLIKELY(StateRCTest))
++	{
++		// Note: Won't work correctly with modules that do mid-sync.
++		EmulateSpecStruct estmp = espec;
+ 
+ 	  MemoryStream state0(524288);
+ 	  MemoryStream state1(524288);
+@@ -1334,19 +1410,19 @@
+ 
+ 	  if(!(state1.map_size() == state2.map_size() && !memcmp(state1.map() + 32, state2.map() + 32, state1.map_size() - 32)))
+ 	  {
+-	   FileStream sd0("/tmp/sdump0", FileStream::MODE_WRITE);
+-	   FileStream sd1("/tmp/sdump1", FileStream::MODE_WRITE);
++			FileStream sd0("/tmp/sdump0", FileStream::MODE_WRITE);
++	   	FileStream sd1("/tmp/sdump1", FileStream::MODE_WRITE);
+ 
+-	   sd0.write(state1.map(), state1.map_size());
+-	   sd1.write(state2.map(), state2.map_size());
+-	   sd0.close();
+-	   sd1.close();
+-	   //assert(orig_state.map_size() == new_state.map_size() && !memcmp(orig_state.map() + 32, new_state.map() + 32, orig_state.map_size() - 32));
+-	   abort();
++			sd0.write(state1.map(), state1.map_size());
++			sd1.write(state2.map(), state2.map_size());
++	   	sd0.close();
++	   	sd1.close();
++	   	//assert(orig_state.map_size() == new_state.map_size() && !memcmp(orig_state.map() + 32, new_state.map() + 32, orig_state.map_size() - 32));
++	   	abort();
+ 	  }
+-	 }
+-	 else
+-          MDFNI_Emulate(&espec);
++	}
++	else
++		MDFNI_Emulate(&espec);
+ 
+ 	 if(MDFN_UNLIKELY(StateSLSTest))
+ 	 {
+@@ -2149,7 +2225,7 @@
+ 	}
+ 
+ 	#ifdef WIN32
+-	HandleConsoleMadness();
++	HandleConsoleMadness(); // SLK
+ 	#endif
+ 
+ 	//ThreadTest();
+@@ -2424,12 +2500,20 @@
+ 	   PumpWrap();
+ 
+ 	   if(MDFN_UNLIKELY(NeedVideoSync))
+-           {
+-	    Video_Sync(CurGame);
+-	    PumpWrap();
+-	    //
+-	    NeedVideoSync = 0;
+-           }
++        {
++	     Video_Sync(CurGame);
++	     PumpWrap();
++	     NeedVideoSync = 0;
++		}
++		// SLK
++	   if(MDFN_UNLIKELY(NeedResolutionChange))
++		{
++		 Video_ChangeResolution(CurGame, resolution_to_change_w, resolution_to_change_h);
++         // ??? PumpWrap(); 
++		 NeedResolutionChange = 0;
++		 printf("MAIN - End of resolution change\n");
++		}
++		// SLK END
+ 
+ 	   if(NeededWMInputBehavior_Dirty)
+ 	   {
+diff -Naur -r --no-dereference ./mednafen/src/drivers/main.h ./emu4crt/src/drivers/main.h
+--- ./mednafen/src/drivers/main.h	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/drivers/main.h	2020-03-24 14:09:12.518791000 -0700
+@@ -70,7 +70,6 @@
+ bool GT_ReinitVideo(void);
+ bool GT_ReinitSound(void);
+ 
+-
+ void BuildSystemSetting(MDFNSetting *setting, const char *system_name, const char *name, const char *description, const char *description_extra, MDFNSettingType type, 
+ 	const char *default_value, const char *minimum = NULL, const char *maximum = NULL,
+ 	bool (*validate_func)(const char *name, const char *value) = NULL, void (*ChangeNotification)(const char *name) = NULL, 
+diff -Naur -r --no-dereference ./mednafen/src/drivers/video.cpp ./emu4crt/src/drivers/video.cpp
+--- ./mednafen/src/drivers/video.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/drivers/video.cpp	2020-04-15 15:13:32.155183461 -0700
+@@ -105,6 +105,16 @@
+  VDRIVER__COUNT
+ };
+ 
++// SLK
++static int _resolution_switch;
++enum
++{
++ RES_STATIC = 0,
++ RES_NATIVE = 1,
++ RES_SUPER = 2
++};
++// SLK - end
++
+ enum
+ {
+  NTVB_NONE = 0,
+@@ -146,6 +156,17 @@
+  { NULL, 0 },
+ };
+ 
++// SLK - custom setting
++static const MDFNSetting_EnumList Resolution_Switch[] =
++{
++ // Legacy:
++ { "0", RES_STATIC},
++ { "native", RES_NATIVE, "Native resolution", gettext_noop("Use emulated system native resolution.") },
++ { "super", RES_SUPER, "Super resolution", gettext_noop("Use super resolutions") },
++ { NULL, 0 },
++};
++// SLK - end
++
+ static const MDFNSetting GlobalVideoSettings[] =
+ {
+  { "video.driver", MDFNSF_NOFLAGS, gettext_noop("Video output driver."), NULL, MDFNST_ENUM, "default", NULL, NULL, NULL, NULL, VDriver_List },
+@@ -161,6 +182,11 @@
+ 				MDFNST_BOOL, "1" },
+ 
+  { "video.disable_composition", MDFNSF_NOFLAGS, gettext_noop("Attempt to disable desktop composition."), gettext_noop("Currently, this setting only has an effect on Windows Vista and Windows 7(and probably the equivalent server versions as well)."), MDFNST_BOOL, "1" },
++ 
++ // SLK - admit new parameter
++ { "video.resolution_switch", MDFNSF_NOFLAGS, gettext_noop("Video resolution switch (0, native or super)."), NULL, MDFNST_ENUM, "0", NULL, NULL, NULL, NULL, Resolution_Switch},
++ // SLK - end
++ 
+ };
+ 
+ static const MDFNSetting_EnumList StretchMode_List[] =
+@@ -746,6 +772,168 @@
+   SetMode(new_mode);
+ #endif
+ 
++
++// SLK 
++void Video_ChangeResolution(MDFNGI *gi, int w, int h)
++{
++  printf("VIDEO - Video_ChangeResolution - Requested video mode: %d x %d\n", w, h);
++      
++      SMDRect.w = w;
++
++      // vertical offset for OSD
++      switch(h){
++        case 240:SMDRect.y = h - SMDRect.h - 18;
++      break;
++        case 288:SMDRect.y = h - SMDRect.h - 32;
++      break;
++        case 480:SMDRect.y = h - SMDRect.h - 32;
++      break;
++        case 576:SMDRect.y = h - SMDRect.h - 64;
++      }
++
++    if(SMSurface)
++    {
++      MDFN_PixelFormat SMFormat = SMSurface->format;
++      delete SMSurface;
++      SMSurface = nullptr;
++      SMSurface = new MDFN_Surface(NULL, SMRect.w, SMRect.h, SMRect.w, SMFormat);
++    }
++/*  TODO - rebuild HelpSurface on resolution change
++    if(HelpSurface)
++    {
++      delete HelpSurface;
++      HelpSurface = nullptr;
++    }
++*/
++
++// TODO: clean unwanted and duplicate code
++  if(video_settings.fullscreen == 0)
++  {
++    printf("  Video mode: WINDOWED\n");
++
++    SDL_SetWindowSize(window, w, h);
++    video_settings.xres = w;
++    video_settings.yres = h;
++    VideoGI->nominal_width = w;
++    screen_dest_rect.w = screen_w = w;
++    screen_dest_rect.h = screen_h = h;
++    screen_dest_rect.x = 0;
++    screen_dest_rect.y = 0;
++    int x, y;
++    SDL_GetWindowPosition(window, &x, &y);
++    SDL_PumpEvents();
++    SDL_SetWindowPosition(window, x, y);
++    ogl_blitter->SetViewport(w, h);
++    current_resolution_h = h;
++    current_resolution_w = w;
++  }
++  else
++  {
++    printf("  Video mode: FULLSCREEN\n");
++
++    SDL_DisplayMode current;
++    SDL_DisplayMode mode;
++    SDL_DisplayMode trymode;
++    int displayIndex;
++    
++    displayIndex = SDL_GetWindowDisplayIndex(window);
++    if(displayIndex < 0)
++    {
++      printf("  ERROR Could not get screen index: %s\n", SDL_GetError());
++      return;
++    }
++    else
++    {
++      printf("  Screen index: %d\n",displayIndex);
++    }
++   
++    if(SDL_GetCurrentDisplayMode(displayIndex, &current) != 0)
++    {
++      printf("  Could not get display mode for video display %d: %s\n", displayIndex, SDL_GetError());
++    }
++    else
++    {
++      printf("  Display #%d: Current display mode is %dx%dpx @ %dhz.\n", displayIndex, current.w, current.h, current.refresh_rate);
++      trymode.w = w;
++      trymode.h = h;
++      trymode.refresh_rate = 0;
++
++      if (SDL_GetClosestDisplayMode(displayIndex, &trymode, &mode) == NULL)
++      {
++        printf("  No suitable display mode was found, %s\n",SDL_GetError());
++      }
++      else
++      {
++        printf("  Received: \t%dx%dpx @ %dhz \n", mode.w, mode.h, mode.refresh_rate);
++#ifdef WIN32
++          // Use Win32 API for resolution chang
++          Video_WinSetVideoMode(mode.w,mode.h);
++          SDL_SetWindowSize(window, w, h);
++          video_settings.xres = w;
++          video_settings.yres = h;
++          screen_dest_rect.x = 0;
++          screen_dest_rect.y = 0;
++          screen_dest_rect.w = w;
++          screen_dest_rect.h = h;
++          screen_w = w;
++          screen_h = h;
++          ogl_blitter->SetViewport(screen_w, screen_h);
++          current_resolution_h = h;
++          current_resolution_w = w;
++#else
++        // Use SDL video change function - slower
++        if(SDL_SetWindowDisplayMode(window, &mode) < 0)
++        {
++          printf("ERROR - SDL_SetWindowDisplayMode: '%s'\n", SDL_GetError());
++        }
++        else
++        {
++          SDL_SetWindowSize(window, w, h);
++          video_settings.xres = w;
++          video_settings.yres = h;
++          VideoGI->nominal_width = w;
++          screen_w = w;
++          screen_h = h;
++          // screen = SDL_GetWindowSurface(window);
++          screen_dest_rect.x = 0;
++          screen_dest_rect.y = 0;
++          screen_dest_rect.w = w;
++          screen_dest_rect.h = h;
++          //SDL_GetWindowPosition(window, &x, &y);
++          //SDL_PumpEvents();
++          //SDL_SetWindowPosition(window, x, y);
++          ogl_blitter->SetViewport(screen_w, screen_h);
++          current_resolution_h = h;
++          current_resolution_w = w;
++        }
++#endif
++      }
++      printf("VIDEO - Video_ChangeResolution completed\n");
++    }
++  }
++}
++
++#ifdef WIN32
++void Video_WinSetVideoMode(int iWidth, int iHeight)
++{
++  DEVMODE Mode;
++  printf("EnumDisplaySettings return: %ld\n",EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &Mode));
++
++  //Mode.dmBitsPerPel = iBpp;
++  printf("EnumDisplaySettings return refresh rate: %ld\n",Mode.dmDisplayFrequency);
++  Mode.dmPelsWidth = iWidth;
++  Mode.dmPelsHeight = iHeight;
++  Mode.dmSize = sizeof(Mode);
++  Mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL;
++
++  Mode.dmDisplayFrequency = 59.941002;
++
++  printf("ChangeDisplaySettings return: %ld\n",ChangeDisplaySettings(&Mode, CDS_FULLSCREEN));
++
++};
++#endif
++// SLK - end
++
+ void Video_Sync(MDFNGI *gi)
+ {
+  MDFNI_printf(_("Initializing video...\n"));
+@@ -844,6 +1032,41 @@
+ 
+  video_settings.shader = (ShaderType)MDFN_GetSettingI(snp + "shader");
+  video_settings.shader_str = MDFN_GetSettingS(snp + "shader");
++ 
++ // SLK - set video settings - disable some options in conflict with native resolution
++ _resolution_switch = MDFN_GetSettingI("video.resolution_switch");
++ if(_resolution_switch)
++ {
++  if(_resolution_switch == RES_NATIVE) // Native Res
++  { 
++    use_native_resolution = true;
++    printf("### VIDEO Native resolution init - set to %dx%d\n",resolution_to_change_w,resolution_to_change_h);
++    video_settings.xres = resolution_to_change_w;  // for fullscreen mode
++    VideoGI->nominal_width = resolution_to_change_w;  // for windowed mode
++    video_settings.xscale = 1;
++    video_settings.xscalefs = 1;
++    video_settings.yscalefs = 1;
++    video_settings.stretch = 0;
++    
++  }
++  if(_resolution_switch == RES_SUPER)
++  {
++    use_super_resolution = true;
++    printf("### VIDEO Super resolution init - set to 2560x%d\n",resolution_to_change_h);
++    video_settings.xres = current_resolution_w = 2560;  // for fullscreen mode
++    VideoGI->nominal_width = 2560;  // for windowed mode
++    video_settings.xscale = 1;
++    video_settings.xscalefs = 1;
++    video_settings.yscalefs = 1;
++    video_settings.stretch = 0;
++  }
++  video_settings.yres =  current_resolution_h = resolution_to_change_h;  // for fullscreen mode
++  VideoGI->nominal_height = resolution_to_change_h;  // for windowed mode
++  video_settings.yscale = 1;
++  video_settings.videoip = 0;
++  video_settings.shader = SHADER_NONE;
++ }
++ 
+  //
+  //
+  if(0)
+@@ -1238,11 +1461,44 @@
+   SMRect.y = 0;
+   SMRect.w = screen_w;
+ 
+-  SMDRect.w = SMRect.w * xmu;
++  // SLK - Set OSD message rendering rect.
++  if(use_super_resolution) // enlarge OSD message in super resolution mode
++  {
++    SMDRect.w = SMRect.w * xmu;
++    printf("VIDEO - Init : SMRect.w: %d xmu: %d\n",SMRect.w,xmu);
++  }
++  else
++  {
++    SMDRect.w = SMRect.w * xmu;
++  }
++  // SLK - end
++  
++  //SMDRect.w = SMRect.w * xmu;
+   SMDRect.h = SMRect.h * ymu;
+   SMDRect.x = (screen_w - SMDRect.w) / 2;
+-  SMDRect.y = screen_h - SMDRect.h;
++  // SMDRect.y = screen_h - SMDRect.h;
+ 
++  // SLK - Vertical offset for OSD messages
++  if(use_native_resolution || use_super_resolution)
++  {
++    switch(screen_h){
++      case 240:SMDRect.y = screen_h - SMDRect.h - 18;
++		break;
++      case 288:SMDRect.y = screen_h - SMDRect.h - 32;
++		break;
++      case 480:SMDRect.y = screen_h - SMDRect.h - 32;
++		break;
++      case 576:SMDRect.y = screen_h - SMDRect.h - 64;
++		break;
++      default:SMDRect.y = screen_h - SMDRect.h * xmu; // TODO: ???
++    }
++  }
++  else
++  {
++    SMDRect.y = screen_h - SMDRect.h;
++  }
++  // SLK - end  
++  
+   if(SMDRect.x < 0)
+   {
+    SMRect.w += SMDRect.x * 2 / xmu;
+@@ -1645,9 +1901,24 @@
+  src_rect.w = DisplayRect->w;
+  src_rect.y = DisplayRect->y;
+  src_rect.h = DisplayRect->h;
+-
++ 
+  if(LineWidths[0] == ~0) // Skip multi line widths code?
+  {
++  // SLK - blit for: MD & NES & [...]
++  //printf("      Src: %dx%d - %d,%d\n",src_rect.w,src_rect.h,src_rect.x,src_rect.y);
++  //printf("     Dest: %dx%d - %d,%d\n",screen_dest_rect.w,screen_dest_rect.h,screen_dest_rect.x,screen_dest_rect.y);
++  //  src_rect.y = (resolution_to_change_h - src_rect.h) / 2 ; //SLK
++  if(use_native_resolution || use_super_resolution)
++  {
++    if(src_rect.w > screen_dest_rect.w)
++    {
++      src_rect.x = (src_rect.w - screen_dest_rect.w) / 2;
++      src_rect.w = screen_dest_rect.w;
++    }
++    screen_dest_rect.y = (resolution_to_change_h - src_rect.h) / 2; 
++    screen_dest_rect.h = src_rect.h;
++  }
++  // SLK end
+   SubBlit(msurface, src_rect, screen_dest_rect, InterlaceField);
+  }
+  else
+@@ -1687,25 +1958,68 @@
+     }
+     else
+     {
+-     sub_dest_rect.x = screen_dest_rect.x;
+-     sub_dest_rect.w = screen_dest_rect.w;
+-     sub_dest_rect.y = screen_dest_rect.y + (last_y - src_rect.y) * screen_dest_rect.h / src_rect.h;
+-     sub_dest_rect.h = sub_src_rect.h * screen_dest_rect.h / src_rect.h;
+-    }
+-
+-    if(!sub_dest_rect.h) // May occur with small yscale values in certain cases, so prevent triggering an assert()
+-     sub_dest_rect.h = 1;
++      if (use_native_resolution || use_super_resolution)
++      {
++        // SLK - (prevent) resizing and centering
++        // printf("      src_rect:    %dx%d - X:%d, Y:%d\n",src_rect.w,src_rect.h,src_rect.x,src_rect.y);
++        sub_dest_rect.x = screen_dest_rect.x;
++        sub_dest_rect.w = screen_dest_rect.w;
++        sub_dest_rect.y = screen_dest_rect.y + (last_y - src_rect.y); // * screen_dest_rect.h / src_rect.h;
++        //printf("      sub_src_rect:    %dx%d %d,%d\n",sub_src_rect.w,sub_src_rect.h,sub_src_rect.x,sub_src_rect.y);
++        //printf("      sub_dest_rect:   %dx%d %d,%d\n",sub_dest_rect.w,sub_dest_rect.h,sub_dest_rect.x,sub_dest_rect.y);
++        //printf("      sub_screen_rect: %dx%d %d,%d\n",screen_dest_rect.w,screen_dest_rect.h,screen_dest_rect.x,screen_dest_rect.y);
++
++        if (sub_src_rect.w >= resolution_to_change_w) // horizontal crop to fit screen
++        {
++          sub_src_rect.x = sub_src_rect.x + ((sub_src_rect.w - resolution_to_change_w) / 2);
++          sub_src_rect.w = resolution_to_change_w;
++        }
++
++        if (native_resolution_vcenter == true) // default vertical centering
++        {
++          sub_dest_rect.y = sub_dest_rect.y + (resolution_to_change_h - sub_src_rect.h) / 2;
++          sub_dest_rect.h = sub_src_rect.h;
++        }
++        else // fill screen (psx - half black screen fix)
++        {
++          sub_dest_rect.h = sub_src_rect.h * screen_dest_rect.h / src_rect.h;
++        }
++        //printf("  SLK sub_src_rect:    %dx%d %d,%d\n",sub_src_rect.w,sub_src_rect.h,sub_src_rect.x,sub_src_rect.y);
++        //printf("  SLK sub_dest_rect:   %dx%d %d,%d\n",sub_dest_rect.w,sub_dest_rect.h,sub_dest_rect.x,sub_dest_rect.y);
++        //printf("  SLK sub_screen_rect: %dx%d %d,%d\n",screen_dest_rect.w,screen_dest_rect.h,screen_dest_rect.x,screen_dest_rect.y);
++      }
++      else
++      {
++        sub_dest_rect.x = screen_dest_rect.x;
++        sub_dest_rect.w = screen_dest_rect.w;
++        sub_dest_rect.y = screen_dest_rect.y + (last_y - src_rect.y) * screen_dest_rect.h / src_rect.h;
++        sub_dest_rect.h = sub_src_rect.h * screen_dest_rect.h / src_rect.h;
++      }
+ 
+-    // Blit here!
+-    SubBlit(msurface, sub_src_rect, sub_dest_rect, InterlaceField);
++      if (!sub_dest_rect.h)
++      {
++        sub_dest_rect.h = 1;
++      } // May occur with small yscale values in certain cases, so prevent triggering an assert()
++ 
++        //printf("  SLK sub_src_rect:    %dx%d %d,%d\n",sub_src_rect.w,sub_src_rect.h,sub_src_rect.x,sub_src_rect.y);
++        //printf("  SLK sub_dest_rect:   %dx%d %d,%d\n",sub_dest_rect.w,sub_dest_rect.h,sub_dest_rect.x,sub_dest_rect.y);
++        //printf("  SLK sub_screen_rect: %dx%d %d,%d\n",screen_dest_rect.w,screen_dest_rect.h,screen_dest_rect.x,screen_dest_rect.y);
++ 
++ 
++ 
++      // SLK - end
++
++ 
++      // Blit here!
++      SubBlit(msurface, sub_src_rect, sub_dest_rect, InterlaceField);
+ 
+-    last_y = y;
++      last_y = y;
+ 
+-    if(y != (src_rect.y + src_rect.h))
+-    {
+-     last_width = LineWidths[y];
++      if (y != (src_rect.y + src_rect.h))
++      {
++        last_width = LineWidths[y];
++      }
+     }
+-
+    }
+   }
+  }
+diff -Naur -r --no-dereference ./mednafen/src/drivers/video.h ./emu4crt/src/drivers/video.h
+--- ./mednafen/src/drivers/video.h	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/drivers/video.h	2020-03-24 14:09:12.518791000 -0700
+@@ -36,6 +36,13 @@
+ 
+ void Video_Sync(MDFNGI* gi);
+ 
++// SLK
++void Video_ChangeResolution(MDFNGI* gi, int w, int h);
++#ifdef WIN32
++void Video_WinSetVideoMode(int iWidth, int iHeight);
++#endif
++// SLK
++
+ void Video_Exposed(void);
+ 
+ void Video_Kill(void) MDFN_COLD;
+diff -Naur -r --no-dereference ./mednafen/src/drivers/video-state.cpp ./emu4crt/src/drivers/video-state.cpp
+--- ./mednafen/src/drivers/video-state.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/drivers/video-state.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -161,7 +161,7 @@
+  } // end if(StateStatus)
+ 
+  if(PreviewSurface)
+- {
++{
+   MDFN_Rect tdrect, drect;
+ 
+   int meow = ((screen_w / CurGame->nominal_width) + 1) / 2;
+@@ -169,19 +169,51 @@
+ 
+   tdrect.w = TextRect.w * meow;
+   tdrect.h = TextRect.h * meow;
+-  tdrect.x = (screen_w - tdrect.w) / 2;
+-  tdrect.y = screen_h - tdrect.h;
+-
+-  BlitRaw(TextSurface, &TextRect, &tdrect);
+-
+-  drect.w = PreviewRect.w * meow;
+-  drect.h = PreviewRect.h * meow;
+-  drect.x = (screen_w - drect.w) / 2;
+-  drect.y = screen_h - drect.h - tdrect.h - 4;
+-
+-  BlitRaw(PreviewSurface, &PreviewRect, &drect);
+-
+- }
++  tdrect.x = (screen_w - tdrect.w) / 2; 
++  // SLK - Custom savestate selection OSD
++  if(use_native_resolution || use_super_resolution)
++    {
++      switch(screen_h){
++	case 240:tdrect.y = screen_h - tdrect.h - 18;
++		 break;
++	case 288:tdrect.y = screen_h - tdrect.h - 32;
++		 break;
++	case 480:tdrect.y = screen_h - tdrect.h - 32;
++		 break;
++	case 576:tdrect.y = screen_h - tdrect.h - 64;
++		 break;
++	default:tdrect.y = screen_h - tdrect.h;
++      }
++      if(use_super_resolution)
++      {
++	tdrect.w = tdrect.w * 8;
++	tdrect.x = (screen_w - tdrect.w) / 2;
++      }
++      
++      BlitRaw(TextSurface, &TextRect, &tdrect);
++      
++      drect.w = screen_w * 0.5 + 3;  // TODO: Why 3 ???
++      drect.h = screen_h * 0.5 + 3;
++      drect.x = (screen_w - drect.w) / 2;
++      drect.y = tdrect.y - drect.h; // SLK
++
++      BlitRaw(PreviewSurface, &PreviewRect, &drect);
++    }
++  else  // native OSD display
++    {
++      tdrect.y = screen_h - tdrect.h;
++
++      BlitRaw(TextSurface, &TextRect, &tdrect);
++
++      drect.w = PreviewRect.w * meow;
++      drect.h = PreviewRect.h * meow;
++      drect.x = (screen_w - drect.w) / 2;
++      drect.y = screen_h - drect.h - tdrect.h - 4;
++
++      BlitRaw(PreviewSurface, &PreviewRect, &drect);
++    }
++  // SLK - end
++  }
+ 
+ }
+ 
+diff -Naur -r --no-dereference ./mednafen/src/md/system.cpp ./emu4crt/src/md/system.cpp
+--- ./mednafen/src/md/system.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/md/system.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -90,7 +90,15 @@
+ #ifdef WANT_DEBUGGER
+     MDDBG_Init();
+ #endif
+-
++  // SLK
++  if(MDFN_GetSettingUI("video.resolution_switch") != 0)
++  {
++    printf("MD - SYSTEM - Init screen resolution to 320x240\n");
++    resolution_to_change_w = 320;
++    resolution_to_change_h = 240;
++    resolution_to_change = true;
++  }
++  // SLK - end
+ }
+ 
+ static void system_reset(bool poweron)
+diff -Naur -r --no-dereference ./mednafen/src/md/vdp.cpp ./emu4crt/src/md/vdp.cpp
+--- ./mednafen/src/md/vdp.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/md/vdp.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -53,6 +53,13 @@
+     0x40404040, 0x50505050, 0x60606060, 0x70707070
+  };
+ 
++// SLK
++static int prev_w = 0;
++static int prev_h = 0;
++static bool prev_is_pal = false;
++static bool prev_i = false;
++//SLK end
++
+ MDVDP::MDVDP()
+ {
+     int bx, ax, i;
+@@ -108,6 +115,42 @@
+ 
+  bitmap.viewport.changed = 1;
+ #endif
++// SLK
++printf("MD - VDP - Video mode w: %dx%d\n",((reg[0xC] & 0x1) ? 320 : 256),(reg[0x1] & 0x8) ? 240 : 224);
++//printf("MD - VDP - Video mode h: %d\n",((reg[0x1] & 0x8) ? 240 : 224));
++printf("MD - VDP - Interlace: %s\n", ((reg[0xC] & 0x06) == 0x06) ? "ON" : "OFF");
++printf("MD - VDP - Region standard: %s\n", (is_pal) ? "PAL" : "NTSC");
++native_resolution_vcenter = false;
++int cur_w = ((reg[0xC] & 0x1) ? 320 : 256);
++int cur_h = 0;
++int cur_i = ((reg[0xC] & 0x06) == 0x06) ? true : false;
++
++if(is_pal) 
++{
++    cur_h = cur_i ? 576 : 288;
++}
++else
++{
++    cur_h = cur_i ? 480 : 240;
++}
++if(prev_w != cur_w){
++    resolution_to_change_w = cur_w;
++    prev_w = cur_w;
++    resolution_to_change = true;
++}
++if(cur_h != prev_h){
++    resolution_to_change_h = cur_h;
++    prev_h = cur_h;
++    resolution_to_change = true;
++}
++
++printf("  MD - VDP - next Video mode w: %dx%d\n",cur_w,cur_h);
++//printf("MD - VDP - Video mode h: %d\n",((reg[0x1] & 0x8) ? 240 : 224));
++//printf("MD - VDP - next Interlace: %s\n", ((reg[0xC] & 0x06) == 0x06) ? "ON" : "OFF");
++printf("  MD - VDP - next Region standard: %s\n", (is_pal) ? "PAL" : "NTSC");
++
++
++// SLK - end
+ }
+ 
+ void MDVDP::SyncColors(void)
+diff -Naur -r --no-dereference ./mednafen/src/mednafen.cpp ./emu4crt/src/mednafen.cpp
+--- ./mednafen/src/mednafen.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/mednafen.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -51,6 +51,18 @@
+ #include "video/tblur.h"
+ #include "qtrecord.h"
+ 
++// SLK
++bool use_native_resolution = false;
++bool use_super_resolution = false;
++bool resolution_to_change;
++int resolution_to_change_w;
++int resolution_to_change_h;
++int current_resolution_w;
++int current_resolution_h;
++bool native_resolution_vcenter = true;
++// SLK end
++
++
+ namespace Mednafen
+ {
+ 
+@@ -1261,7 +1273,7 @@
+           throw MDFN_Error(0, _("Unrecognized file format."));
+         }
+ 
+-	MDFN_printf(_("Using module: %s(%s)\n"), MDFNGameInfo->shortname, MDFNGameInfo->fullname);
++	MDFN_printf(_("Using module:%s (%s)\n"), MDFNGameInfo->shortname, MDFNGameInfo->fullname);
+ 	{
+ 	 MDFN_AutoIndent aindentgm(1);
+ 
+diff -Naur -r --no-dereference ./mednafen/src/mednafen.h ./emu4crt/src/mednafen.h
+--- ./mednafen/src/mednafen.h	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/mednafen.h	2020-03-24 14:09:12.518791000 -0700
+@@ -21,6 +21,18 @@
+ #include "settings.h"
+ #include "NativeVFS.h"
+ 
++// SLK
++extern bool use_native_resolution;
++extern bool use_super_resolution;
++extern bool native_resolution_vcenter;
++extern bool resolution_to_change;
++extern int resolution_to_change_w;
++extern int resolution_to_change_h;
++extern int current_resolution_w;
++extern int current_resolution_h;
++// SLK end
++
++
+ namespace Mednafen
+ {
+ MDFN_HIDE extern NativeVFS NVFS;
+diff -Naur -r --no-dereference ./mednafen/src/nes/nes.cpp ./emu4crt/src/nes/nes.cpp
+--- ./mednafen/src/nes/nes.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/nes/nes.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -287,7 +287,21 @@
+ 	 MDFNGameInfo->fps = PAL? 838977920 : 1008307711;
+ 	 MDFNGameInfo->MasterClock = MDFN_MASTERCLOCK_FIXED(PAL ? PAL_CPU : NTSC_CPU);
+ 	}
+-
++	
++	//SLK
++	if(PAL)
++	{
++	 resolution_to_change_h = 288;
++	}
++	else
++	{
++	 resolution_to_change_h = 240;
++	}
++	resolution_to_change_w = 256;	
++	resolution_to_change = true;
++	//SLK end
++	
++	
+ 	X6502_Init();
+ 	MDFNPPU_Init();
+         MDFNSND_Init(PAL);
+diff -Naur -r --no-dereference ./mednafen/src/pce/pce.cpp ./emu4crt/src/pce/pce.cpp
+--- ./mednafen/src/pce/pce.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/pce/pce.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -414,6 +414,16 @@
+  for(unsigned ch = 0; ch < 2; ch++)
+   HRBufs[ch] = new OwlBuffer();
+ 
++ // SLK
++ if(MDFN_GetSettingB("pce.arcadecard"))
++ {
++   resolution_to_change_w = 256;
++   resolution_to_change_h = 240;
++   resolution_to_change = true;
++ }
++ // SLK
++  
++ 
+  // FIXME:  Make these globals less global!
+  PCE_ACEnabled = MDFN_GetSettingB("pce.arcadecard");
+ 
+diff -Naur -r --no-dereference ./mednafen/src/pce/vce.cpp ./emu4crt/src/pce/vce.cpp
+--- ./mednafen/src/pce/vce.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/pce/vce.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -35,6 +35,11 @@
+ namespace MDFN_IEN_PCE
+ {
+ 
++// SLK
++static int prev_dot_clock = 0; // SLK - 4 to force resolution initializing a start  
++static const int width_list[4] = {256,      320,      512,      512 }; // SLK
++// SLK end
++  
+ static const int vce_ratios[4] = { 4, 3, 2, 2 };
+ 
+ static MDFN_FASTCALL NO_INLINE int32 Sync(const int32 timestamp);
+@@ -634,6 +639,18 @@
+  dot_clock_ratio = vce_ratios[dot_clock];
+ 
+  CR = V;
++ 
++ // SLK
++ if(dot_clock != prev_dot_clock)
++ {
++   printf("PCE - VCE - dot_clock change to: %d\n",dot_clock);
++   prev_dot_clock = dot_clock;
++   resolution_to_change_w = width_list[dot_clock];
++   resolution_to_change_h = 240;
++   resolution_to_change = true;
++ }
++ // SLK end
++ 
+ }
+ 
+ void VCE::SetPixelFormat(const MDFN_PixelFormat &format, const uint8* CustomColorMap, const uint32 CustomColorMapLen)
+diff -Naur -r --no-dereference ./mednafen/src/pce_fast/pce.cpp ./emu4crt/src/pce_fast/pce.cpp
+--- ./mednafen/src/pce_fast/pce.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/pce_fast/pce.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -290,6 +290,16 @@
+ {
+  HuC6280_Init();
+ 
++ // SLK - TODO find a better place for this
++ if(MDFN_GetSettingUI("video.resolution_switch") != 0)
++ {
++   printf("PCE FAST - Init resolution to 256x240\n");
++   resolution_to_change_w = 256;
++   resolution_to_change_h = 240;
++   resolution_to_change = true;
++ }
++ // SLK
++
+  // FIXME:  Make these globals less global!
+  pce_overclocked = MDFN_GetSettingUI("pce_fast.ocmultiplier");
+  PCE_ACEnabled = MDFN_GetSettingB("pce_fast.arcadecard");
+diff -Naur -r --no-dereference ./mednafen/src/pce_fast/vdc.cpp ./emu4crt/src/pce_fast/vdc.cpp
+--- ./mednafen/src/pce_fast/vdc.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/pce_fast/vdc.cpp	2020-03-24 14:09:12.518791000 -0700
+@@ -53,6 +53,11 @@
+ int VDC_TotalChips;
+ vdc_t vdc_chips[2];
+ 
++// SLK
++static int prev_dot_clock = 0; // SLK - 4 to force resolution initializing a start  
++static const int width_list[4] = {256,      320,      512,      512 }; // SLK
++// SLK - end
++
+ static INLINE void FixPCache(int entry)
+ {
+  const uint32* __restrict__ cm32 = systemColorMap32[vce.CR >> 7];
+@@ -655,6 +660,18 @@
+  end += 128;
+  start += 128;
+ 
++  // SLK
++ if(vce.dot_clock != prev_dot_clock)
++ {
++   printf("PCE FAST - VCE - dot_clock changed from %d to %d\n",prev_dot_clock,vce.dot_clock);
++   prev_dot_clock = vce.dot_clock;
++   resolution_to_change_w = width_list[vce.dot_clock];
++   resolution_to_change_h = 240;
++   resolution_to_change = true;
++ }
++ // SLK END
++
++
+ #if 0
+  uint32 display_width;
+  display_width = (M_vdc_HDW + 1) * 8;
+diff -Naur -r --no-dereference ./mednafen/src/pcfx/king.cpp ./emu4crt/src/pcfx/king.cpp
+--- ./mednafen/src/pcfx/king.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/pcfx/king.cpp	2020-04-15 14:35:46.762712022 -0700
+@@ -58,6 +58,7 @@
+ #define ADPCMDBG(format, ...) (void)0
+ //FXDBG
+ 
++
+ /*
+  SCSI Questions(this list needs to be revised more and merged into the issues list at the beginning of the file):
+ 
+@@ -203,8 +204,6 @@
+ // 8 * 2 for left + right padding for scrolling
+ alignas(8) static uint32 bg_linebuffer[256 + 8 + 8];
+ 
+-
+-
+ // Don't change these enums, there are some hardcoded values still used(particularly, LAYER_NONE).
+ enum
+ {
+@@ -1734,6 +1733,11 @@
+ static uint32 HighDotClockWidth;
+ extern RavenBuffer* FXCDDABufs[2]; // FIXME, externals are evil!
+ 
++// SLK
++int prev_dot_clock = 0; 
++bool prev_frame_interlaced = false;
++// SLK - end
++
+ static void Cleanup(void)
+ {
+  if(king)
+@@ -1754,7 +1758,17 @@
+ 
+   king->lastts = 0;
+ 
+-  HighDotClockWidth = MDFN_GetSettingUI("pcfx.high_dotclock_width");
++  // SLK
++  if (use_super_resolution || use_native_resolution)
++  {
++    printf("KING_Init - Use super or native resolution\n");
++    HighDotClockWidth = 256;
++  }
++  else
++  {
++    HighDotClockWidth = MDFN_GetSettingUI("pcfx.high_dotclock_width");
++  }
++  // SLK - end
+   BGLayerDisable = 0;
+ 
+   BuildCMT();
+@@ -2484,8 +2498,18 @@
+  DisplayRect->x = 0;
+  DisplayRect->w = 256;
+ 
+- DisplayRect->y = MDFN_GetSettingUI("pcfx.slstart");
+- DisplayRect->h = MDFN_GetSettingUI("pcfx.slend") - DisplayRect->y + 1;
++ // SLK
++ if(use_native_resolution || use_super_resolution)
++ {
++  DisplayRect->y = 0;  
++  DisplayRect->h = 240;
++ }
++ else
++ {
++  DisplayRect->y = MDFN_GetSettingUI("pcfx.slstart");
++  DisplayRect->h = MDFN_GetSettingUI("pcfx.slend") - DisplayRect->y + 1;
++ }
++ // SLK - end
+ 
+  if(fx_vce.frame_interlaced)
+  {
+@@ -2496,6 +2520,24 @@
+   DisplayRect->y *= 2;
+   DisplayRect->h *= 2;
+  }
++ // SLK
++ if(fx_vce.dot_clock != prev_dot_clock || prev_frame_interlaced != fx_vce.frame_interlaced)
++ {
++   printf("PCFX - KING_StartFrame\n");
++   printf("PCFX - HighDotClockWidth: %d\n",HighDotClockWidth);
++   printf("PCFX - fx_vce.dot_clock: %d\n",fx_vce.dot_clock);
++   
++   resolution_to_change_w =  (fx_vce.dot_clock) ? 341 : 256;
++   HighDotClockWidth = (fx_vce.dot_clock) ? 341 : 256;
++   resolution_to_change_h =  (fx_vce.frame_interlaced) ? 480 : 240;
++   
++   prev_dot_clock        = fx_vce.dot_clock;
++   prev_frame_interlaced = fx_vce.frame_interlaced;
++   
++   //HighDotClockWidth = 341;  // Why ???
++   resolution_to_change = true;
++  }
++ // SLK - end
+ }
+ 
+ static int rb_type;
+diff -Naur -r --no-dereference ./mednafen/src/pcfx/king.h ./emu4crt/src/pcfx/king.h
+--- ./mednafen/src/pcfx/king.h	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/pcfx/king.h	2020-03-24 14:09:12.518791000 -0700
+@@ -25,6 +25,7 @@
+ namespace MDFN_IEN_PCFX
+ {
+ 
++
+ //
+ // Be sure to keep the numbered/lettered *_GSREG_* registers(MPROG0*, AFFIN*, etc.) here in contiguous sequential order(since we do stuff like "- KING_GSREG_MPROG0"
+ // in king.cpp.
+diff -Naur -r --no-dereference ./mednafen/src/pcfx/pcfx.cpp ./emu4crt/src/pcfx/pcfx.cpp
+--- ./mednafen/src/pcfx/pcfx.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/pcfx/pcfx.cpp	2020-04-15 13:47:59.463844820 -0700
+@@ -651,7 +651,18 @@
+  if(WantHuC6273)
+   HuC6273_Init();
+ 
+- KING_Init();
++ // SLK
++ 
++  printf("PCFX - pcfx - use native or super resolution\n");
++  native_resolution_vcenter = false;
++  resolution_to_change = true;
++  resolution_to_change_w = 256;
++  resolution_to_change_h = 240;
++  // SLK - END
++
++KING_Init();
++ 
++
+ 
+  SCSICD_SetDisc(true, NULL, true);
+ 
+@@ -687,7 +698,21 @@
+  // Emulation raw framebuffer image should always be of 256 width when the pcfx.high_dotclock_width setting is set to "256",
+  // but it could be either 256 or 341 when the setting is set to "341", so stay with 1024 in that case so we won't have
+  // a messed up aspect ratio in our recorded QuickTime movies.
+- MDFNGameInfo->lcm_width = (MDFN_GetSettingUI("pcfx.high_dotclock_width") == 256) ? 256 : 1024;
++
++
++// SLK
++
++  if (use_super_resolution || use_native_resolution)
++  {
++    MDFNGameInfo->lcm_width = (MDFN_GetSettingUI("pcfx.high_dotclock_width") == 256) ? 256 : 341;
++  }
++  else
++  {
++    MDFNGameInfo->lcm_width = (MDFN_GetSettingUI("pcfx.high_dotclock_width") == 256) ? 256 : 1024;
++  }
++// SLK - end
++
++
+  MDFNGameInfo->lcm_height = MDFNGameInfo->nominal_height;
+ 
+  MDFNMP_Init(1024 * 1024, ((uint64)1 << 32) / (1024 * 1024));
+diff -Naur -r --no-dereference ./mednafen/src/psx/gpu.cpp ./emu4crt/src/psx/gpu.cpp
+--- ./mednafen/src/psx/gpu.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/psx/gpu.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -24,6 +24,7 @@
+ #include "psx.h"
+ #include "timer.h"
+ 
++#include <mednafen/mednafen.h>   // SLK
+ /* FIXME: Respect horizontal timing register values in relation to hsync/hblank/hretrace/whatever signal sent to the timers */
+ 
+ /*
+@@ -74,6 +75,79 @@
+ }
+ using namespace PS_GPU_INTERNAL;
+ 
++// SLK
++uint32 PreviousDisplayMode;
++int prev_resolution_w;
++int prev_resolution_h;
++int res_change_count;
++
++
++void GPU_NewDisplayMode(int V)  // SLK - identify GPU new resolution, set global variables used in MAIN & VIDEO
++{
++  // GP1(08h) - Display mode
++  //   0-1   Horizontal Resolution 1     (0=256, 1=320, 2=512, 3=640) ;GPUSTAT.17-18
++  //   2     Vertical Resolution         (0=240, 1=480, when Bit5=1)  ;GPUSTAT.19
++  //   3     Video Mode                  (0=NTSC/60Hz, 1=PAL/50Hz)    ;GPUSTAT.20
++  //   4     Display Area Color Depth    (0=15bit, 1=24bit)           ;GPUSTAT.21
++  //   5     Vertical Interlace          (0=Off, 1=On)                ;GPUSTAT.22
++  //   6     Horizontal Resolution 2     (0=256/320/512/640, 1=368)   ;GPUSTAT.16
++  //   7     "Reverseflag"               (0=Normal, 1=Distorted)      ;GPUSTAT.14    
++  //   source: http://problemkaputt.de/psx-spx.txt
++
++  // Width
++  if((V & 0x40) == 0x40)
++  {
++    resolution_to_change_w = 368;
++  }
++  else
++  {
++  switch(V & 0x3)
++      {
++	case 0x00:
++	  resolution_to_change_w = 256;
++	  break;
++	case 0x01:	
++	  resolution_to_change_w = 320;
++	  break;
++	case 0x02:	
++	  resolution_to_change_w = 512;
++	  break;
++	case 0x03:	
++	  resolution_to_change_w = 640;
++	  break;
++      }
++  }
++  // Height
++  if ((V & 8) == 8)
++  { //PAL
++    if ((V & 32) == 32) {resolution_to_change_h = 576;} //5 
++    else {resolution_to_change_h = 288;}
++  }
++  else
++  { // NTSC
++    if ((V & 32) == 32){resolution_to_change_h = 480;} //5
++    else {resolution_to_change_h = 240;}
++  }
++  
++  if(prev_resolution_w != resolution_to_change_w || prev_resolution_h != resolution_to_change_h)
++  {
++      if(res_change_count < 2)
++      {
++  	    res_change_count += 1;
++	      printf("PSX GPU - Startup resolution change bypass (%d).\n",res_change_count);
++	      native_resolution_vcenter = false;  // No need Vertical centering for PSX module.
++     }
++      else{
++	prev_resolution_w = resolution_to_change_w; // will be used in VIDEO.cpp
++	prev_resolution_h = resolution_to_change_h;
++	printf("PSX - GPU register - resolution change to: %dx%d (V=%d)\n",resolution_to_change_w,resolution_to_change_h,V);
++	resolution_to_change = true;  // will be reset in VIDEO.cpp
++
++      }
++  }
++}
++// SLK end
++
+ void GPU_Init(bool pal_clock_and_tv)
+ {
+  static const int8 dither_table[4][4] =
+@@ -110,11 +184,25 @@
+  {
+   GPUClockRatio = 103896; // 65536 * 53693181.818 / (44100 * 768)
+   hmc_to_visible = 520; 
++    
++  //SLK
++  resolution_to_change = true;
++  resolution_to_change_w = 640;
++  resolution_to_change_h = 480;
++  printf("PSX - GPU Init - NTSC mode - resolution set to: %dx%d\n",resolution_to_change_w,resolution_to_change_h);
++  
+  }
+  else	// PAL clock
+  {
+   GPUClockRatio = 102948; // 65536 * 53203425 / (44100 * 768)
+   hmc_to_visible = 560; 
++  
++  //SLK
++  resolution_to_change = true;
++  resolution_to_change_w = 640;
++  resolution_to_change_h = 576;
++  printf("PSX - GPU Init - PAL mode - resolution set to: %dx%d\n",resolution_to_change_w,resolution_to_change_h);
++  
+  }
+ 
+  memcpy(&Commands[0x00], Commands_00_1F, sizeof(Commands_00_1F));
+@@ -905,6 +993,11 @@
+    case 0x08:
+ 	//printf("\n\nDISPLAYMODE SET: 0x%02x, %u *************************\n\n\n", V & 0xFF, scanline);
+ 	DisplayMode = V & 0xFF;
++	if(PreviousDisplayMode != DisplayMode) // SLK - Trap GPU resolution change
++	{
++	  PreviousDisplayMode = DisplayMode;
++	  GPU_NewDisplayMode(V);
++	}
+ 	break;
+ 
+    case 0x09:
+@@ -1118,8 +1211,13 @@
+ MDFN_FASTCALL pscpu_timestamp_t GPU_Update(const pscpu_timestamp_t sys_timestamp)
+ {
+  const uint32 dmc = (DisplayMode & 0x40) ? 4 : (DisplayMode & 0x3);
+- const uint32 dmw = HVisMax / DotClockRatios[dmc];	// Must be <= (768 - drxbo)
+- const uint32 dmpa = HVisOffs / DotClockRatios[dmc];	// Must be <= drxbo
++ 
++ // SLK - Hotdog mod 1/2 - Fix Horizontal centering & cropping
++ //const uint32 dmw = HVisMax / DotClockRatios[dmc];	// Must be <= (768 - drxbo)
++ //const uint32 dmpa = HVisOffs / DotClockRatios[dmc];	// Must be <= drxbo
++ const uint32 dmw = 2560 / DotClockRatios[dmc]; // Must be <= (768 - 32)
++ const uint32 dmpa = 0;
++// SLK - Hotdog mod  1/2 - end
+ 
+  int32 sys_clocks = sys_timestamp - lastts;
+  int32 gpu_clocks;
+@@ -1273,7 +1371,7 @@
+         char buffer[256];
+         trio_snprintf(buffer, sizeof(buffer), _("VIDEO STANDARD MISMATCH"));
+         DrawText(surface, 0, (DisplayRect->h / 2) - (13 / 2), buffer,
+-		surface->MakeColor(0x00, 0xFF, 0x00), MDFN_FONT_6x13_12x13, DisplayRect->w);
++		    surface->MakeColor(0x00, 0xFF, 0x00), MDFN_FONT_6x13_12x13, DisplayRect->w);
+        }
+       }
+       else
+@@ -1293,8 +1391,8 @@
+ 
+        for(int i = 0; i < (DisplayRect->y + DisplayRect->h); i++)
+        {
+-	surface->pixels[i * surface->pitch32 + drxbo + 0] =
+-	surface->pixels[i * surface->pitch32 + drxbo + 1] = black;
++        surface->pixels[i * surface->pitch32 + drxbo + 0] =
++        surface->pixels[i * surface->pitch32 + drxbo + 1] = black;
+         LineWidths[i] = 2;
+        }
+       }
+@@ -1370,16 +1468,35 @@
+      dest_line = ((scanline - FirstVisibleLine) << espec->InterlaceOn) + espec->InterlaceField;
+      dest = surface->pixels + (drxbo - dmpa) + dest_line * surface->pitch32;
+ 
++     
++     // SLK - Hotdog mod 2/2 - Fix horizontal centering & cropping
++     int32 actualGameBufferWidth = (HorizEnd - HorizStart) / DotClockRatios[dmc];
++     int32 ourBufferWidth = dmw;
++     
++     int32 leftOffset = (actualGameBufferWidth - ourBufferWidth) / 2;
++     //leftOffset *= DotClockRatios[dmc]; // Get back into PSX GPU co-ords.
++     leftOffset = std::max<int32>(leftOffset, 0); // Make sure not negative
++     dx_start += leftOffset; // Offset the PSX buffer to render relative to our frame.
++     // 
++     
++     dest_line = ((scanline - FirstVisibleLine) << espec->InterlaceOn) + espec->InterlaceField;
++     dest = surface->pixels + (drxbo - dmpa) + dest_line * surface->pitch32;
++
+      if(dx_end < dx_start)
+       dx_end = dx_start;
+ 
+      dx_start = dx_start / DotClockRatios[dmc];
+      dx_end = dx_end / DotClockRatios[dmc];
+ 
+-     dx_start -= hmc_to_visible / DotClockRatios[dmc];
+-     dx_end -= hmc_to_visible / DotClockRatios[dmc];
+-     dx_start += 7;
+-     dx_end += 7;
++     dx_end -= dx_start;
++     dx_start = -leftOffset;
++     
++     // dx_start -= hmc_to_visible / DotClockRatios[dmc];
++     // dx_end -= hmc_to_visible / DotClockRatios[dmc];
++     // dx_start += 7;
++     // dx_end += 7;
++     
++     // SLK - Hotdog mod 2/2 - end
+ 
+      if(dx_start < 0)
+      {
+@@ -1462,7 +1579,7 @@
+  }	// end while(gpu_clocks > 0)
+ 
+  //puts("GPU Update End");
+-
++ 
+  TheEnd:
+  lastts = sys_timestamp;
+ 
+diff -Naur -r --no-dereference ./mednafen/src/psx/psx.cpp ./emu4crt/src/psx/psx.cpp
+--- ./mednafen/src/psx/psx.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/psx/psx.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -1129,6 +1129,9 @@
+   if(!espec->skip)
+   {
+    espec->LineWidths[0] = ~0;
++   // SLK
++   espec->DisplayRect.x = espec->DisplayRect.x + (espec->DisplayRect.w * 0.046875);
++   // SLK
+    Player_Draw(espec->surface, &espec->DisplayRect, 0, espec->SoundBuf, espec->SoundBufSize);
+   }
+  }
+diff -Naur -r --no-dereference ./mednafen/src/sms/cart.cpp ./emu4crt/src/sms/cart.cpp
+--- ./mednafen/src/sms/cart.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/sms/cart.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -24,6 +24,8 @@
+ 
+ #include <zlib.h>
+ 
++#include <mednafen/mednafen.h> // SLK
++
+ namespace MDFN_IEN_SMS
+ {
+ 
+@@ -149,6 +151,14 @@
+  MDFN_printf(_("ROM MD5:   0x%s\n"), md5_context::asciistr(MDFNGameInfo->MD5, 0).c_str());
+  MDFN_printf(_("Mapper:    %s\n"), sms_mapper_string_table[mapper]);
+  MDFN_printf(_("Territory: %s\n"), (sms.territory == TERRITORY_DOMESTIC) ? _("Domestic") : _("Export"));
++
++
++ MDFN_printf(_("SMS - system - PAL vs NTSC: %s\n"),sms.display);
++  // SLK
++  resolution_to_change_h = (sms.display) ? 288 : 240;
++  resolution_to_change_w = 256;
++  resolution_to_change = true;
++  // SLK - end
+ }
+ 
+ void Cart_LoadNV(void)
+diff -Naur -r --no-dereference ./mednafen/src/sms/system.cpp ./emu4crt/src/sms/system.cpp
+--- ./mednafen/src/sms/system.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/sms/system.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -19,6 +19,8 @@
+ #include "shared.h"
+ #include <mednafen/mempatcher.h>
+ 
++
++
+ namespace MDFN_IEN_SMS
+ {
+ 
+@@ -232,7 +234,7 @@
+   render_init();
+ 
+   uint32 sndclk;
+-
++ 
+   if(sms.display == DISPLAY_PAL)
+   {
+    sndclk = 3546893;
+diff -Naur -r --no-dereference ./mednafen/src/snes/interface.cpp ./emu4crt/src/snes/interface.cpp
+--- ./mednafen/src/snes/interface.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/snes/interface.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -73,6 +73,11 @@
+ 
+ static std::vector<uint32> ColorMap;	// [32768]
+ 
++// SLK
++int prev_resolution_w;
++int prev_resolution_h;
++// SLK - end
++
+ static void BuildColorMap(MDFN_PixelFormat &format, uint8* CustomColorMap)
+ {
+  for(int x = 0; x < 32768; x++) 
+@@ -545,6 +550,23 @@
+  MDFNGameInfo->fps = PAL ? 838977920 : 1008307711;
+  MDFNGameInfo->MasterClock = MDFN_MASTERCLOCK_FIXED(32040.5);
+ 
++ // SLK -  init. dynamic display video resolution - progressive by default
++ printf("SNES Interface - Regional mode: %s \n",(PAL ? "PAL" : "NTSC"));
++ if(PAL)
++ {
++  resolution_to_change_h = 288;
++ }
++ else
++ {
++  printf("  Video mode set to 256 x 240\n");
++  resolution_to_change_h = 240;
++ }
++ resolution_to_change_w = 256;
++ resolution_to_change = true;
++ prev_resolution_w = resolution_to_change_w;
++ prev_resolution_h = resolution_to_change_h;
++ // SLK - end
++ 
+  if(!snsf_loader)
+  {
+   EnableHBlend = MDFN_GetSettingB("snes.h_blend");
+@@ -889,6 +911,32 @@
+  bSNES_v059::system.run_mednafen_custom();
+  bSNES_v059::ppu.enable_renderer(true);
+ 
++ // SLK - guess SNES active resolution
++ //printf("SNES Interface - Emulate - %dx%d - %d,%d\n",tdr->w,tdr->h,tdr->x,tdr->y);
++ if(tdr->h > 10 && tdr->w > 10 && tdr->w != prev_resolution_w)
++ {
++   resolution_to_change = true;
++   resolution_to_change_w = tdr->w;
++ }
++ if(tdr->h > 10 && tdr->w > 10 && tdr->h != prev_resolution_h)
++ {
++   resolution_to_change = true;
++   if(tdr->h <= 400)
++   {
++    resolution_to_change_h = bSNES_v059::system.region() ? 288 : 240;
++   }
++   else
++   {
++     resolution_to_change_h = bSNES_v059::system.region() ? 576 : 480;
++   }
++ }
++ if(resolution_to_change)
++ {
++   //printf("SNES - Interface - Resolution change detected: %dx%d\n",resolution_to_change_w,resolution_to_change_h);
++   prev_resolution_w = resolution_to_change_w;
++   prev_resolution_h = tdr->h;
++ }
++ // SLK - end
+ 
+  //
+  // Blank out any missed lines(for e.g. display height change with PAL emulation)
+diff -Naur -r --no-dereference ./mednafen/src/snes_faust/ppu_common.h ./emu4crt/src/snes_faust/ppu_common.h
+--- ./mednafen/src/snes_faust/ppu_common.h	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/snes_faust/ppu_common.h	2020-03-24 14:09:12.522791000 -0700
+@@ -21,5 +21,4 @@
+ void PPU_PokeCGRAM(uint32 addr, uint16 val) MDFN_COLD;
+ void PPU_PokeOAM(uint32 addr, uint8 val) MDFN_COLD;
+ void PPU_PokeOAMHI(uint32 addr, uint8 val) MDFN_COLD;
+-void PPU_SetRegister(const unsigned id, const uint32 value) MDFN_COLD;
+-
++void PPU_SetRegister(const unsigned id, const uint32 value) MDFN_COLD;
+\ No newline at end of file
+diff -Naur -r --no-dereference ./mednafen/src/snes_faust/ppu_mt.cpp ./emu4crt/src/snes_faust/ppu_mt.cpp
+--- ./mednafen/src/snes_faust/ppu_mt.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/snes_faust/ppu_mt.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -43,6 +43,12 @@
+ namespace PPU_MT
+ {
+ 
++// SLK
++int prev_resolution_w;
++int prev_resolution_h;
++// SLK
++
++
+ static struct
+ {
+  uint32 lastts;
+diff -Naur -r --no-dereference ./mednafen/src/snes_faust/ppu_mtrender.cpp ./emu4crt/src/snes_faust/ppu_mtrender.cpp
+--- ./mednafen/src/snes_faust/ppu_mtrender.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/snes_faust/ppu_mtrender.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -23,6 +23,10 @@
+ #include "ppu.h"
+ #include "ppu_mtrender.h"
+ 
++// SLK
++// #include <mednafen/mednafen.h>
++// SLK end
++
+ #include <mednafen/Time.h>
+ #include <mednafen/hash/sha256.h>
+ 
+@@ -45,6 +49,12 @@
+ namespace PPU_MTRENDER
+ {
+ 
++// SLK
++int prev_resolution_w;
++int prev_resolution_h;
++// SLK
++
++
+ PPU_S PPU;
+ 
+ #include "ppu_render_common.inc"
+diff -Naur -r --no-dereference ./mednafen/src/snes_faust/ppu_render_common.inc ./emu4crt/src/snes_faust/ppu_render_common.inc
+--- ./mednafen/src/snes_faust/ppu_render_common.inc	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/snes_faust/ppu_render_common.inc	2020-03-24 14:09:12.522791000 -0700
+@@ -1621,6 +1621,16 @@
+  T* const out_target = es->surface->pix<T>() + out_line * es->surface->pitchinpix;
+  const uint32 w = ((BGMode & 0x7) == 0x5 || (BGMode & 0x7) == 0x6 || (ScreenMode & 0x08)) ? 512 : 256;
+ 
++// SLK 
++ if(w != prev_resolution_w)
++ {
++   resolution_to_change_w = w;
++   prev_resolution_w = w;
++   resolution_to_change = true;
++ }
++// SLK - end
++
++
+  es->LineWidths[out_line] = w;
+  //
+  LineTarget++;
+diff -Naur -r --no-dereference ./mednafen/src/snes_faust/ppu_st.cpp ./emu4crt/src/snes_faust/ppu_st.cpp
+--- ./mednafen/src/snes_faust/ppu_st.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/snes_faust/ppu_st.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -34,6 +34,10 @@
+ #include "input.h"
+ #include "cart.h"
+ 
++// SLK
++#include <mednafen/mednafen.h>
++// SLK end
++
+ #include <mednafen/mempatcher.h>
+ #include <mednafen/hash/sha256.h>
+ 
+@@ -56,6 +60,11 @@
+ namespace PPU_ST
+ {
+ 
++// SLK
++int prev_resolution_w;
++int prev_resolution_h;
++// SLK
++
+ struct PPU_S
+ {
+  uint32 lastts;
+diff -Naur -r --no-dereference ./mednafen/src/snes_faust/snes.cpp ./emu4crt/src/snes_faust/snes.cpp
+--- ./mednafen/src/snes_faust/snes.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/snes_faust/snes.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -43,6 +43,7 @@
+ static MemoryStream* SpecExSS = NULL;
+ static int32 SpecExAudioExpected;
+ 
++
+ struct ReadPatchInfoStruct
+ {
+  bool operator<(const ReadPatchInfoStruct& o) const
+@@ -604,6 +605,8 @@
+   }
+  }
+ 
++
++
+  DMA_Init();
+  //
+  //
+@@ -617,6 +620,9 @@
+  const unsigned region = MDFN_GetSettingUI("snes_faust.region");
+  bool IsPAL, IsPALPPUBit;
+ 
++
++
++
+  if(snsf_loader)
+  {
+   uint8* const cart_ram = CART_GetRAMPointer();
+@@ -671,6 +677,23 @@
+  }
+  //
+  //
++
++// SLK -  init. dynamic display video resolution - progressive by default
++ printf("SNES FAUST snes - Regional mode: %s \n",(IsPAL ? "PAL" : "NTSC"));
++ if(IsPAL)
++ {
++  resolution_to_change_h = 288;
++ }
++ else
++ {
++  printf("  Video mode set to 256 x 240\n");
++  resolution_to_change_h = 240;
++ }
++ resolution_to_change_w = 256;
++ resolution_to_change = true;
++ // SLK - end
++
++
+  INPUT_Init();
+  {
+   const bool mte[2] = { MDFN_GetSettingB("snes_faust.input.sport1.multitap"), MDFN_GetSettingB("snes_faust.input.sport2.multitap") };
+diff -Naur -r --no-dereference ./mednafen/src/ss/vdp2_render.cpp ./emu4crt/src/ss/vdp2_render.cpp
+--- ./mednafen/src/ss/vdp2_render.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/ss/vdp2_render.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -145,6 +145,14 @@
+ static uint8 LineColorCCRatio;
+ static uint8 BackCCRatio;
+ 
++//SLK
++static uint8 prev_InterlaceMode = 0;
++static uint8 prev_HRes = 0;
++static uint8 prev_VRes = 0;
++static bool  prev_BorderMode = 0;
++// SLK end
++
++
+ //
+ static struct
+ {
+@@ -550,6 +558,39 @@
+ 	InterlaceMode = (V >> 6) & 0x3;
+ 	VRes = (V >> 4) & 0x3;
+ 	HRes = (V >> 0) & 0x7;
++	// SLK
++	if(InterlaceMode != prev_InterlaceMode || HRes != prev_HRes)
++	{
++	  printf("VDP2 Render - Television mode changed: %d\n",V);
++	  printf("     BorderMode: %d\n",BorderMode);
++	  printf("     PAL: %d\n",PAL);
++	  printf("     InterlaceMode: %d\n",InterlaceMode);
++	  printf("     VRes: %d\n",VRes);
++	  printf("     HRes: %d\n",HRes);
++	  prev_BorderMode = BorderMode;
++	  prev_InterlaceMode = InterlaceMode;
++	  prev_VRes = VRes;
++	  prev_HRes = HRes;
++	  // HRES
++	  switch(HRes){
++	    case 0:
++	      resolution_to_change_w = 320;
++	      break;
++	    case 1:
++	      resolution_to_change_w = 352;
++	      break;
++	    case 2:
++	      resolution_to_change_w = 640;
++	      break;
++	    case 3:
++	      resolution_to_change_w = 704;
++	      break;
++	  }
++	  if(InterlaceMode >= 2){resolution_to_change_h = PAL ? 576 : 480;} else {resolution_to_change_h = PAL ? 288 : 240;}
++	  printf("SS - VDP2 Render - TV mode set to %dx%d",resolution_to_change_w,resolution_to_change_h);
++	  resolution_to_change  = true; // Flag for video resolution change by VIDEO.cpp/MAIN.cpp
++	}
++	// SLK - end
+ 	break;
+ 
+   case 0x02:
+@@ -3303,12 +3344,20 @@
+  {
+   gi->nominal_width = (ShowHOverscan ? 365 : 354);
+   gi->fb_height = 576;
++  resolution_to_change_h = 288; // SLK - init crt mode
+  }
+  else
+  {
+   gi->nominal_width = (ShowHOverscan ? 302 : 292);
+   gi->fb_height = 480;
++  resolution_to_change_h = 240; // SLK - init crt mode
+  }
++ // SLK
++ resolution_to_change_w = 320;
++ resolution_to_change = true; // SLK - init crt mode
++ // SLK - end
++ 
++ 
+  gi->nominal_height = LineVisLast + 1 - LineVisFirst;
+ 
+  gi->lcm_width = (ShowHOverscan? 10560 : 10240);
+diff -Naur -r --no-dereference ./mednafen/src/state.cpp ./emu4crt/src/state.cpp
+--- ./mednafen/src/state.cpp	2020-03-08 12:34:54.000000000 -0700
++++ ./emu4crt/src/state.cpp	2020-03-24 14:09:12.522791000 -0700
+@@ -470,6 +470,14 @@
+ 	  neowidth = MDFNGameInfo->nominal_width;
+ 	  neoheight = MDFNGameInfo->nominal_height;
+ 
++	  // SLK - Approximation to prevent SaveState snapshot corruption
++	  if(use_super_resolution)
++	  {
++	    neowidth = resolution_to_change_w;
++	    neoheight = DisplayRect->h;
++	  }
++	  // SLK - end
++	  
+ 	  if(LineWidths[0] != ~0)
+  	  {
+ 	   int32 first_w = LineWidths[DisplayRect->y];
+@@ -857,7 +865,9 @@
+   MDFN_Error* me = dynamic_cast<MDFN_Error*>(&e);
+ 
+   if(!fname && !suffix)
+-   MDFN_Notify(MDFN_NOTICE_ERROR, _("State %d load error: %s"), CurrentState, e.what());
++   // SLK
++   // MDFN_Notify(MDFN_NOTICE_ERROR, _("State %d load error: %s"), CurrentState, e.what());
++   MDFN_Notify(MDFN_NOTICE_ERROR, _("State %d not found."), CurrentState); // SLK - shorten message to fit low-res rendering    
+   else
+   {
+    // FIXME: Autosave kludgery, refactor interfaces in the future to make cleaner.
