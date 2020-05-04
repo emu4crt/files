@@ -1,4 +1,4 @@
-# **Mednafen 1.24.1 - emu4crt - A12**
+# **Mednafen 1.24.2 - emu4crt - A13**
 
 emu4crt is a Mednafen emulator mod intended to be used on a system connected to a CRT screen, typically a 15kHz TV or an arcade monitor.
 
@@ -85,7 +85,7 @@ emu4crt.exe can be placed in an existing mednafen.exe directory, both can share 
 
 ## Limits and known issues
 
-- The emulator does not deal with resolution refresh rate. So, to get a deterministic behavior, a resolution should only exist at the expected refresh rate (ie. no 320x240 @ 55Hz).
+- The emulator does not deal with resolution refresh rate. So, to get a deterministic behavior, a resolution must only exist at the expected refresh rate (ie. no 320x240 @ 55Hz).
   
 - Using emu4crt, resolution switch is not seamless process as it is on a console or with some other emulators. At each resolution change, some sound and graphical glitches will occur. 
   
@@ -93,9 +93,7 @@ emu4crt.exe can be placed in an existing mednafen.exe directory, both can share 
   
 - Windows 7 seems quicker than Windows 10 to switch resolution, at least with CRT Emudriver.
   
-- Emulation logic is preserved, so, game compatibility should be same as Mednafen official release.
-  
-- Alt+Enter usage, to switch from fullscreen to window mode can generate rendering scaling issues.
+- Emulation logic is preserved, so, expected game compatibility is same as with the Mednafen official release.
   
 If any specific issue with emu4crt mod, of course, do not bother the Mednafen Team!
 
