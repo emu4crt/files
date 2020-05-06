@@ -22,7 +22,7 @@ Many options, meaningless in a CRT screen usage, have been removed from Mednafen
   
 emu4crt can be use in two modes:
 
-*`Native Resolution`: Same resolution as emulated system.
+* `Native Resolution`: Same resolution as emulated system.
    More custom resolution are required (see below)
    Generates more resolution changes, which has side effects
 
