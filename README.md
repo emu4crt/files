@@ -1,4 +1,4 @@
-# **Mednafen 1.26.0 UNSTABLE - emu4crt - A13**
+# **Mednafen 1.26.1 - emu4crt - A13**
 
 emu4crt is a Mednafen emulator mod intended to be used on a system connected to a CRT screen, typically a 15kHz TV or an arcade monitor.
 
